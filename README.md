@@ -642,18 +642,6 @@ ruview-rssi-tui/
 
 ---
 
-# Updating The README
-
-After editing this README, commit and push:
-
-```bash
-git add README.md
-git commit -m "Add complete install and run instructions"
-git push
-```
-
----
-
 # Credits
 
 This project uses the RuView Linux RSSI collector.
