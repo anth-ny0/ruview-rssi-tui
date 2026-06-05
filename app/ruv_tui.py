@@ -2,9 +2,14 @@
 import sys
 import time
 import statistics
+import subprocess
+from pathlib import Path
 from collections import deque
 
-sys.path.insert(0, "vendor/RuView/archive")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUVIEW_ARCHIVE = PROJECT_ROOT / "vendor" / "RuView" / "archive"
+
+sys.path.insert(0, str(RUVIEW_ARCHIVE))
 
 from v1.src.sensing.rssi_collector import LinuxWifiCollector
 
@@ -137,20 +142,36 @@ class MotionApp(App):
         border: heavy #ff4d6d;
     }
 
-    #calibration {
-        height: 8;
-        background: #020812;
-        border: round #0b84b8;
-        padding: 1 2;
+    #top_monitor_row {
+        height: 10;
         margin-bottom: 1;
     }
 
-    #calibration_label {
+    #calibration {
+        width: 58%;
+        height: 100%;
+        background: #020812;
+        border: round #0b84b8;
+        padding: 1 2;
+        margin-right: 1;
+    }
+
+    #rxq_box {
+        width: 42%;
+        height: 100%;
+        background: #020812;
+        border: round #0b84b8;
+        padding: 1 2;
+    }
+
+    #calibration_label,
+    #rxq_label {
         color: #6bdcff;
         text-style: bold;
     }
 
-    #calibration_text {
+    #calibration_text,
+    #rxq_text {
         color: #d8f5ff;
         margin-top: 1;
     }
@@ -284,62 +305,34 @@ class MotionApp(App):
             "body": (
                 "This controls how much the RSSI must swing inside the live window "
                 "before it counts as suspicious.\n\n"
-                "The app calculates:\n\n"
                 "live_range = strongest RSSI - weakest RSSI\n\n"
-                "Example:\n"
-                "If your live RSSI moves from -25 dBm to -32 dBm, then:\n\n"
-                "live_range = 7 dB\n\n"
-                "If your range threshold is 5 dB, that triggers the range check.\n\n"
-                "This setting is good at catching quick RSSI jumps, dips, and sharp changes."
+                "If your live RSSI moves from -25 dBm to -32 dBm, live_range is 7 dB."
             ),
-            "effect": (
-                "Higher = less sensitive to quick RSSI jumps.\n"
-                "Lower = more sensitive to smaller RSSI swings."
-            ),
-            "raise": (
-                "Raise this if the app says POSSIBLE or MOTION when nobody is moving, "
-                "especially if your RSSI naturally bounces a few dB."
-            ),
-            "lower": "Lower this if walking near the router or adapter does not trigger anything.",
+            "effect": "Higher = fewer false positives. Lower = more sensitive.",
+            "raise": "Raise this if normal RSSI jumps trigger motion.",
+            "lower": "Lower this if walking near the router does not trigger anything.",
         },
         "std": {
             "title": "Std Multiplier",
             "body": (
                 "This controls how much noisier the live signal must be compared "
-                "to your calibrated baseline noise.\n\n"
-                "The app measures baseline noise during calibration. Then it checks:\n\n"
-                "live_std >= baseline_std × std_multiplier\n\n"
-                "Example:\n"
-                "If baseline_std is 0.80 and std_multiplier is 3.0, the live signal "
-                "must reach about 2.40 std before this check triggers.\n\n"
-                "This setting helps ignore normal Wi-Fi noise."
+                "to the calibrated baseline noise.\n\n"
+                "live_std >= baseline_std × std_multiplier"
             ),
-            "effect": (
-                "Higher = ignores more normal Wi-Fi noise.\n"
-                "Lower = reacts to smaller signal instability."
-            ),
+            "effect": "Higher = ignores more Wi-Fi noise. Lower = reacts faster.",
             "raise": "Raise this if normal adapter/router noise causes false positives.",
-            "lower": "Lower this if real movement causes noisy RSSI but still does not trigger.",
+            "lower": "Lower this if movement makes RSSI noisy but does not trigger.",
         },
         "shift": {
             "title": "Average Shift Threshold",
             "body": (
                 "This controls how far the live average RSSI must move away from "
                 "the baseline average.\n\n"
-                "The app calculates:\n\n"
-                "avg_shift = abs(live_average - baseline_average)\n\n"
-                "Example:\n"
-                "If your baseline average is -24 dBm and the live average becomes -29 dBm, then:\n\n"
-                "avg_shift = 5 dB\n\n"
-                "If your shift threshold is 3 dB, that triggers the shift check.\n\n"
-                "This catches slower changes, like a person standing between the adapter and router."
+                "avg_shift = abs(live_average - baseline_average)"
             ),
-            "effect": (
-                "Higher = less sensitive to slow signal drift.\n"
-                "Lower = detects smaller average signal changes."
-            ),
-            "raise": "Raise this if the signal slowly drifts and creates false positives.",
-            "lower": "Lower this if movement causes small but steady RSSI changes.",
+            "effect": "Higher = less sensitive to drift. Lower = detects smaller shifts.",
+            "raise": "Raise this if slow signal drift causes false positives.",
+            "lower": "Lower this if movement causes small steady RSSI changes.",
         },
     }
 
@@ -351,13 +344,21 @@ class MotionApp(App):
                 with TabPane("Monitor", id="monitor_tab"):
                     yield StatusCard(id="status", classes="calibrating")
 
-                    with Vertical(id="calibration"):
-                        yield Static("CALIBRATION", id="calibration_label")
-                        yield ProgressBar(
-                            total=CALIBRATION_SECONDS * SAMPLE_RATE,
-                            id="calibration_bar",
-                        )
-                        yield Static("Stay still while the baseline is collected.", id="calibration_text")
+                    with Horizontal(id="top_monitor_row"):
+                        with Vertical(id="calibration"):
+                            yield Static("CALIBRATION", id="calibration_label")
+                            yield ProgressBar(
+                                total=CALIBRATION_SECONDS * SAMPLE_RATE,
+                                id="calibration_bar",
+                            )
+                            yield Static(
+                                "Stay still while the baseline is collected.",
+                                id="calibration_text",
+                            )
+
+                        with Vertical(id="rxq_box"):
+                            yield Static("RXQ", id="rxq_label")
+                            yield Static("Waiting for signal data...", id="rxq_text")
 
                     with Horizontal(id="dashboard"):
                         with Vertical(id="left_col", classes="card"):
@@ -389,7 +390,7 @@ class MotionApp(App):
                         yield Markdown(self.explanation_text(), id="explain_box")
 
             yield Static(
-                "q quit • r recalibrate • l live baseline • click setting • ←/→ tune • ↑/↓ select • scroll settings pane",
+                "q quit • r recalibrate • l live baseline • click setting • ←/→ tune • ↑/↓ select • RXQ/RSSI bars on Monitor",
                 id="controls",
             )
 
@@ -415,8 +416,186 @@ class MotionApp(App):
         self.window = deque(maxlen=self.window_size)
 
         self.update_tuning_tab()
+        self.update_rxq_box()
 
         self.set_interval(1.0 / SAMPLE_RATE, self.sample_wifi)
+        self.set_interval(1.0, self.update_rxq_box)
+
+    def run_cmd(self, command):
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            return result.stdout.strip(), result.stderr.strip()
+        except Exception as e:
+            return "", str(e)
+
+    def read_proc_wireless(self):
+        data = {
+            "rxq_raw": None,
+            "rxq_percent": None,
+            "rssi": None,
+            "noise": None,
+            "error": None,
+        }
+
+        try:
+            with open("/proc/net/wireless", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            for line in lines:
+                stripped = line.strip()
+
+                if not stripped.startswith(f"{INTERFACE}:"):
+                    continue
+
+                parts = stripped.replace(":", " ").split()
+
+                if len(parts) >= 5:
+                    data["rxq_raw"] = float(parts[2].rstrip("."))
+                    data["rssi"] = float(parts[3].rstrip("."))
+                    data["noise"] = float(parts[4].rstrip("."))
+
+                    data["rxq_percent"] = max(
+                        0.0,
+                        min(100.0, (data["rxq_raw"] / 70.0) * 100.0),
+                    )
+
+                return data
+
+            data["error"] = f"{INTERFACE} was not found in /proc/net/wireless."
+            return data
+
+        except Exception as e:
+            data["error"] = str(e)
+            return data
+
+    def read_iw_link(self):
+        data = {
+            "connected": False,
+            "ssid": None,
+            "signal": None,
+            "rx_bitrate": None,
+            "tx_bitrate": None,
+            "error": None,
+        }
+
+        stdout, stderr = self.run_cmd(["iw", "dev", INTERFACE, "link"])
+
+        if stderr:
+            data["error"] = stderr
+
+        if not stdout:
+            return data
+
+        if "Not connected" in stdout:
+            return data
+
+        data["connected"] = True
+
+        for line in stdout.splitlines():
+            line = line.strip()
+
+            if line.startswith("SSID:"):
+                data["ssid"] = line.split("SSID:", 1)[1].strip()
+
+            elif line.startswith("signal:"):
+                data["signal"] = line.split("signal:", 1)[1].strip()
+
+            elif line.startswith("rx bitrate:"):
+                data["rx_bitrate"] = line.split("rx bitrate:", 1)[1].strip()
+
+            elif line.startswith("tx bitrate:"):
+                data["tx_bitrate"] = line.split("tx bitrate:", 1)[1].strip()
+
+        return data
+
+    def quality_label(self, percent):
+        if percent is None:
+            return "UNKNOWN"
+
+        if percent >= 75:
+            return "EXCELLENT"
+        if percent >= 60:
+            return "GOOD"
+        if percent >= 40:
+            return "FAIR"
+        if percent >= 20:
+            return "WEAK"
+        return "POOR"
+
+    def visual_bar(self, percent, width=28):
+        if percent is None:
+            return f"[dim]{'░' * width}[/dim] --%"
+
+        percent = max(0.0, min(100.0, percent))
+        filled = int((percent / 100.0) * width)
+        empty = width - filled
+
+        return (
+            f"[cyan]{'█' * filled}[/cyan]"
+            f"[dim]{'░' * empty}[/dim] "
+            f"[bold]{percent:.0f}%[/bold]"
+        )
+
+    def rssi_to_percent(self, rssi):
+        """
+        Convert RSSI dBm to a visual 0-100% scale.
+
+        -90 dBm = very weak
+        -30 dBm = excellent
+        """
+        if rssi is None:
+            return None
+
+        return max(0.0, min(100.0, ((rssi + 90.0) / 60.0) * 100.0))
+
+    def update_rxq_box(self) -> None:
+        wireless = self.read_proc_wireless()
+        link = self.read_iw_link()
+
+        rxq_percent = wireless.get("rxq_percent")
+        rxq_raw = wireless.get("rxq_raw")
+        rssi = wireless.get("rssi")
+        noise = wireless.get("noise")
+
+        rssi_percent = self.rssi_to_percent(rssi)
+
+        ssid = link.get("ssid") or "unknown"
+        iw_signal = link.get("signal") or "unknown"
+        rx_bitrate = link.get("rx_bitrate") or "unknown"
+        tx_bitrate = link.get("tx_bitrate") or "unknown"
+
+        if link.get("connected"):
+            state = "[bold green]connected[/bold green]"
+        else:
+            state = "[bold red]not connected[/bold red]"
+
+        rxq_raw_text = "unknown" if rxq_raw is None else f"{rxq_raw:.1f}/70"
+        rssi_text = "unknown" if rssi is None else f"{rssi:.1f} dBm"
+        noise_text = "unknown" if noise is None else f"{noise:.1f} dBm"
+
+        rxq_text = (
+            f"SSID [bold]{ssid}[/bold]   State  {state}\n\n"
+            f"RXQ   {self.visual_bar(rxq_percent)}  {self.quality_label(rxq_percent)}\n"
+            f"      raw [bold]{rxq_raw_text}[/bold]\n\n"
+            f"RSSI  {self.visual_bar(rssi_percent)}  {self.quality_label(rssi_percent)}\n"
+            f"      level [bold]{rssi_text}[/bold]    iw {iw_signal}\n\n"
+            f"Noise [bold]{noise_text}[/bold]\n"
+            f"Rate  RX {rx_bitrate} / TX {tx_bitrate}"
+        )
+
+        if wireless.get("error"):
+            rxq_text += f"\n[red]{wireless['error']}[/red]"
+
+        if link.get("error"):
+            rxq_text += f"\n[red]{link['error']}[/red]"
+
+        self.query_one("#rxq_text", Static).update(rxq_text)
 
     def make_bar(self, value, min_value, max_value, width=28):
         ratio = (value - min_value) / (max_value - min_value)
@@ -856,15 +1035,20 @@ This app watches Wi-Fi RSSI values and looks for changes that suggest motion.
 
 RSSI is signal strength in dBm.
 
-Strong signal example:
+---
 
-`-25 dBm`
+# RXQ / RSSI Bars
 
-Weak signal example:
+The Monitor page shows visual bars for RXQ and RSSI.
 
-`-70 dBm`
+RXQ is link quality from `/proc/net/wireless`.
 
-When something moves near the signal path, RSSI can bounce, dip, or become noisier.
+RSSI is signal level in dBm.
+
+For the visual RSSI bar:
+
+- `-90 dBm` is treated as very weak.
+- `-30 dBm` is treated as excellent.
 
 ---
 
@@ -896,23 +1080,17 @@ The live window is compared against the baseline.
 
 Checks how far RSSI swings inside the live window.
 
-Formula:
-
 `live_range >= range_threshold`
 
 ## Std check
 
 Checks how noisy the signal is compared to the baseline.
 
-Formula:
-
 `live_std >= baseline_std * std_multiplier`
 
 ## Shift check
 
 Checks how far the live average moved from the baseline average.
-
-Formula:
 
 `avg_shift >= shift_threshold`
 
@@ -941,32 +1119,6 @@ One check looks suspicious.
 `MOTION`
 
 Multiple checks agree and score is high enough.
-
----
-
-# Tuning
-
-The Tuning tab lets you adjust the detector live.
-
-Click a setting to select it.
-
-Use left and right arrows to decrease or increase the selected setting.
-
-Use up and down arrows to move between settings.
-
-The selected setting description appears in the Current Settings panel.
-
-Raise thresholds to reduce false positives.
-
-Lower thresholds to make it more sensitive.
-
----
-
-# Live Baseline
-
-Press `l` to toggle live baseline tracking.
-
-When live baseline is ON, the baseline slowly adapts while the result is STILL.
 """
 
 
