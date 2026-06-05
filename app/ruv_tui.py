@@ -4,9 +4,9 @@ import time
 import statistics
 from collections import deque
 
-sys.path.insert(0, "vendor/RuView/archive/v1")
+sys.path.insert(0, "vendor/RuView/archive")
 
-from src.sensing.rssi_collector import LinuxWifiCollector
+from v1.src.sensing.rssi_collector import LinuxWifiCollector
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
